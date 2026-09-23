@@ -590,7 +590,7 @@ function bindNewSessionStart() {
     const btn=document.getElementById('start-btn');
     btn.textContent='Starting…'; btn.disabled=true;
 
-    const {data:session,error:sErr}=await db.from('active_session').insert({date,passcode,started_at:new Date().toISOString()}).select().single();
+    const {data:session,error:sErr}=await db.from('active_session').insert({date,passcode}).select().single();
     if (sErr) { showToast('Error starting session','#e53e3e'); btn.textContent='Start Session →'; btn.disabled=false; return; }
 
     // Everyone starts with 1 buy-in; further buy-ins are recorded during the session.
@@ -1288,7 +1288,7 @@ async function renderProfile(el, player) {
       ${perHourVal!==null
         ? statBox('Per Hour',`${perHourVal>=0?'+':''}${perHourVal.toFixed(2)} bi`,colorCls(perHourVal),perHourSince?`Since ${perHourSince}`:'')
         : statBox('Per Hour','No data yet','neutral','Play a session to track')}
-      ${count>0 ? statBox('Avg Per Session',`${(total/count)>=0?'+':''}${(total/count).toFixed(2)} bi`,colorCls(total/count)) : ''}
+      ${count>0 ? statBox('Avg Per Session',`${(realSessions.reduce((a,s)=>a+s.buyins,0)/count)>=0?'+':''}${(realSessions.reduce((a,s)=>a+s.buyins,0)/count).toFixed(2)} bi`,colorCls(realSessions.reduce((a,s)=>a+s.buyins,0)/count)) : ''}
     </div>
     <div class="card" style="padding:0.875rem;margin-bottom:1rem;display:flex;align-items:center;gap:0.75rem">
       <div style="font-size:1.75rem">${streakIcon}</div>
