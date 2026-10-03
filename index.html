@@ -1824,7 +1824,7 @@ async function renderEventsPage(el) {
           const sorted = Object.entries(totals).sort((a,b)=>b[1]-a[1]);
           if (sorted.length > 0 && sorted[0][1] !== 0) {
             const topName = sorted[0][0], topVal = Number(sorted[0][1]).toFixed(1);
-            winnerHTML = `<div style="margin-top:0.6rem;margin-bottom:0.3rem"><span class="player-pill" style="padding:0.35rem 0.8rem;font-size:0.75rem;border-color:${topVal>0?'var(--green)':'var(--neg)'};background:${topVal>0?'rgba(63,185,80,0.12)':'rgba(248,81,73,0.12)'}">🏆 ${topName} <span style="color:${topVal>0?'var(--green)':'var(--neg)'}">${topVal>0?'+':''}${topVal} bi</span></span></div>`;
+            winnerHTML = `<div style="margin-top:0.6rem;margin-bottom:0.3rem"><span class="player-pill" style="padding:0.45rem 1rem;font-size:0.94rem;border-color:${topVal>0?'var(--green)':'var(--neg)'};background:${topVal>0?'rgba(63,185,80,0.12)':'rgba(248,81,73,0.12)'}">🏆 ${topName} <span style="color:${topVal>0?'var(--green)':'var(--neg)'}">${topVal>0?'+':''}${topVal} bi</span></span></div>`;
           }
         }
       } catch(e) { /* silently skip if no results */ }
