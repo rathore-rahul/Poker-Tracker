@@ -1765,7 +1765,7 @@ async function renderEventsPage(el) {
     listEl.querySelectorAll('[data-end-confirm]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.endConfirm;
-        const {error} = await db.from('events').update({status:'ended', ended_at: new Date().toISOString()}).eq('id',id);
+        const {error} = await db.from('events').update({status:'ended'}).eq('id',id);
         if (error) { showToast('Error ending event','#e53e3e'); return; }
         showToast('Event ended','#3fb950');
         await loadEventsList();
@@ -1788,10 +1788,11 @@ async function renderEventsPage(el) {
     listEl.querySelectorAll('[data-delete-confirm]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.deleteConfirm;
-        const {data:ev, error} = await db.from('events').select('ended_at').eq('id',id).single();
-        if (error) { showToast('Error deleting event','#e53e3e'); return; }
-        if (isEventDeleteLocked(ev)) {
-          showToast('Events can only be deleted within 24 hours of ending','#e53e3e');
+        let endTime;
+        try { endTime = await getEventEndTime(id); }
+        catch(e) { showToast('Error deleting event','#e53e3e'); return; }
+        if (isEventDeleteLocked(endTime)) {
+          showToast('Events can only be deleted within 24 hours of their last session','#e53e3e');
           await loadEventsList();
           return;
         }
@@ -1814,17 +1815,31 @@ async function renderEventsPage(el) {
     });
   }
 
-  function isEventDeleteLocked(ev) {
+  async function getEventEndTime(eventId) {
+    const {data:esRows, error} = await db.from('event_sessions').select('session_id').eq('event_id',eventId);
+    if (error) throw error;
+    const sessionIds = (esRows||[]).map(r=>r.session_id);
+    if (sessionIds.length===0) return null;
+    const {data:sessions, error:sErr} = await db.from('sessions').select('ended_at,created_at').in('id',sessionIds);
+    if (sErr) throw sErr;
+    // Older sessions have no ended_at, but sessions are saved when they end, so created_at matches
+    const times = (sessions||[]).map(s=>Date.parse(s.ended_at||s.created_at)).filter(t=>!isNaN(t));
+    return times.length ? Math.max(...times) : null;
+  }
+
+  function isEventDeleteLocked(endTime) {
     const DELETE_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
-    const endedAt = ev.ended_at ? new Date(ev.ended_at).getTime() : null;
-    return !endedAt || (Date.now() - endedAt) >= DELETE_WINDOW_MS;
+    return endTime !== null && (Date.now() - endTime) >= DELETE_WINDOW_MS;
   }
 
   async function eventCardHTML(ev) {
     const {data:players} = await db.from('event_players').select('player_name').eq('event_id',ev.id);
     const playerNames = (players||[]).map(p=>p.player_name);
     const isActive = ev.status==='active';
-    const isDeleteLocked = isEventDeleteLocked(ev);
+    let isDeleteLocked = true;
+    if (!isActive) {
+      try { isDeleteLocked = isEventDeleteLocked(await getEventEndTime(ev.id)); } catch(e) { /* stay locked if the lookup fails */ }
+    }
 
     // Calculate winner for this event
     let winnerHTML = '';
@@ -1871,7 +1886,7 @@ async function renderEventsPage(el) {
       </div>` : `<div id="delete-conf-${ev.id}" style="display:none;margin-top:0.75rem;background:var(--bg3);border-radius:0.65rem;padding:0.75rem;border:1px solid ${isDeleteLocked?'var(--text2)':'var(--neg)'}">
         <div style="font-size:0.85rem;font-weight:700;margin-bottom:0.3rem">${isDeleteLocked ? '🔒 Delete Locked' : '⚠️ Delete Event?'}</div>
         ${isDeleteLocked
-          ? `<div style="font-size:0.8rem;color:var(--text2);margin-bottom:0.75rem">Events can only be deleted within 24 hours of ending. This event's delete window has passed.</div>`
+          ? `<div style="font-size:0.8rem;color:var(--text2);margin-bottom:0.75rem">Events can only be deleted within 24 hours of their last session. This event's delete window has passed.</div>`
           : `<div style="font-size:0.8rem;color:var(--text2);margin-bottom:0.75rem">This removes the event and its session links. The actual sessions and results are kept but will count on the leaderboard again.</div>`}
         ${isDeleteLocked ? '' : `<button data-delete-confirm="${ev.id}" class="btn-ghost" style="padding:0.4rem 1rem;font-size:0.8rem;color:var(--neg);border-color:var(--neg)">Yes, Delete Event</button>`}
       </div>`}
