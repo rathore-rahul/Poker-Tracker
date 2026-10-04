@@ -1862,7 +1862,7 @@ async function renderEventsPage(el) {
           ? `<div style="font-size:0.8rem;color:var(--text2);margin-bottom:0.75rem">Events can only be deleted 24 hours after ending. Please wait until the cooldown period is over.</div>`
           : `<div style="font-size:0.8rem;color:var(--text2);margin-bottom:0.75rem">This removes the event and its session links. The actual sessions and results are kept but will count on the leaderboard again.</div>`}
         ${isDeleteLocked ? '' : `<button data-delete-confirm="${ev.id}" class="btn-ghost" style="padding:0.4rem 1rem;font-size:0.8rem;color:var(--neg);border-color:var(--neg)">Yes, Delete Event</button>`}
-      </div>`
+      </div>`}
       <div id="summary-${ev.id}" style="display:none;margin-top:0.75rem"></div>
     </div>`;
   }
