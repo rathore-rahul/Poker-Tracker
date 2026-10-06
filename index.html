@@ -1765,7 +1765,8 @@ async function renderEventsPage(el) {
     listEl.querySelectorAll('[data-end-confirm]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.endConfirm;
-        await db.from('events').update({status:'ended'}).eq('id',id);
+        const {error} = await db.from('events').update({status:'ended'}).eq('id',id);
+        if (error) { showToast('Error ending event','#e53e3e'); return; }
         showToast('Event ended','#3fb950');
         await loadEventsList();
       });
@@ -1787,6 +1788,14 @@ async function renderEventsPage(el) {
     listEl.querySelectorAll('[data-delete-confirm]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.deleteConfirm;
+        let endTime;
+        try { endTime = await getEventEndTime(id); }
+        catch(e) { showToast('Error deleting event','#e53e3e'); return; }
+        if (isEventDeleteLocked(endTime)) {
+          showToast('Events can only be deleted within 24 hours of their last session','#e53e3e');
+          await loadEventsList();
+          return;
+        }
         await db.from('event_sessions').delete().eq('event_id',id);
         await db.from('event_players').delete().eq('event_id',id);
         await db.from('events').delete().eq('id',id);
@@ -1806,10 +1815,51 @@ async function renderEventsPage(el) {
     });
   }
 
+  async function getEventEndTime(eventId) {
+    const {data:esRows, error} = await db.from('event_sessions').select('session_id').eq('event_id',eventId);
+    if (error) throw error;
+    const sessionIds = (esRows||[]).map(r=>r.session_id);
+    if (sessionIds.length===0) return null;
+    const {data:sessions, error:sErr} = await db.from('sessions').select('ended_at,created_at').in('id',sessionIds);
+    if (sErr) throw sErr;
+    // Older sessions have no ended_at, but sessions are saved when they end, so created_at matches
+    const times = (sessions||[]).map(s=>Date.parse(s.ended_at||s.created_at)).filter(t=>!isNaN(t));
+    return times.length ? Math.max(...times) : null;
+  }
+
+  function isEventDeleteLocked(endTime) {
+    const DELETE_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+    return endTime !== null && (Date.now() - endTime) >= DELETE_WINDOW_MS;
+  }
+
   async function eventCardHTML(ev) {
     const {data:players} = await db.from('event_players').select('player_name').eq('event_id',ev.id);
     const playerNames = (players||[]).map(p=>p.player_name);
     const isActive = ev.status==='active';
+    let isDeleteLocked = true;
+    if (!isActive) {
+      try { isDeleteLocked = isEventDeleteLocked(await getEventEndTime(ev.id)); } catch(e) { /* stay locked if the lookup fails */ }
+    }
+
+    // Calculate winner for this event
+    let winnerHTML = '';
+    if (!isActive) {
+      try {
+        const {data:esRows} = await db.from('event_sessions').select('session_id').eq('event_id',ev.id);
+        const sessionIds = (esRows||[]).map(r=>r.session_id);
+        if (sessionIds.length > 0) {
+          const {data:results} = await db.from('session_results').select('*').in('session_id',sessionIds);
+          const totals = {};
+          (results||[]).forEach(r => { totals[r.player_name] = (totals[r.player_name]||0) + Number(r.buyins); });
+          const sorted = Object.entries(totals).sort((a,b)=>b[1]-a[1]);
+          if (sorted.length > 0 && sorted[0][1] !== 0) {
+            const topName = sorted[0][0], topVal = Number(sorted[0][1]).toFixed(1);
+            winnerHTML = `<div style="margin-top:0.6rem;margin-bottom:0.3rem"><span class="player-pill" style="padding:0.45rem 1rem;font-size:0.94rem;border-color:${topVal>0?'var(--green)':'var(--neg)'};background:${topVal>0?'rgba(63,185,80,0.12)':'rgba(248,81,73,0.12)'}">🏆 ${topName} <span style="color:${topVal>0?'var(--green)':'var(--neg)'}">${topVal>0?'+':''}${topVal} bi</span></span></div>`;
+          }
+        }
+      } catch(e) { /* silently skip if no results */ }
+    }
+
     return `<div class="card" style="margin-bottom:0.75rem;padding:1.1rem 1.25rem">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem">
         <div>
@@ -1817,24 +1867,28 @@ async function renderEventsPage(el) {
           <div style="font-size:0.75rem;color:var(--text2);margin-top:0.2rem">${playerNames.join(', ')||'No players'}</div>
         </div>
         <span style="font-size:0.7rem;font-weight:700;padding:0.25rem 0.65rem;border-radius:999px;background:${isActive?'rgba(63,185,80,0.15)':'var(--bg3)'};color:${isActive?'var(--green)':'var(--text2)'};">${isActive?'Active':'Ended'}</span>
-      </div>
-      <div style="margin-top:0.85rem;display:flex;gap:0.5rem;flex-wrap:wrap">
+      </div>${winnerHTML}
+      <div style="margin-top:0.7rem;display:flex;gap:0.5rem;flex-wrap:wrap">
         ${isActive ? `
           <button data-start-event-session="${ev.id}" class="btn-red" style="padding:0.4rem 0.9rem;font-size:0.8rem">▶ Start Session</button>
           <button data-end-event="${ev.id}" class="btn-ghost" style="padding:0.4rem 0.8rem;font-size:0.8rem">End Event</button>
         ` : `
           <button data-reopen-event="${ev.id}" class="btn-ghost" style="padding:0.4rem 0.8rem;font-size:0.8rem">Reopen</button>
-          <button data-delete-event="${ev.id}" class="btn-ghost" style="padding:0.4rem 0.8rem;font-size:0.8rem;color:var(--neg);border-color:var(--neg)">🗑 Delete</button>
+          ${isDeleteLocked
+            ? `<span style="padding:0.4rem 0.8rem;font-size:0.75rem;color:var(--text2);border-radius:0.75rem;background:var(--bg3);border:1px solid var(--border);display:flex;align-items:center;gap:0.3rem">🔒 Delete locked</span>`
+            : `<button data-delete-event="${ev.id}" class="btn-ghost" style="padding:0.4rem 0.8rem;font-size:0.8rem;color:var(--neg);border-color:var(--neg)">🗑 Delete</button>`}
         `}
         <button data-event-summary="${ev.id}" class="btn-ghost" style="padding:0.4rem 0.8rem;font-size:0.8rem">📊 Stats</button>
       </div>
       ${isActive ? `<div id="end-conf-${ev.id}" style="display:none;margin-top:0.75rem;background:var(--bg3);border-radius:0.65rem;padding:0.75rem">
         <div style="font-size:0.85rem;margin-bottom:0.5rem;color:var(--text2)">End this event? This will lock it.</div>
         <button data-end-confirm="${ev.id}" class="btn-red" style="padding:0.4rem 1rem;font-size:0.8rem">Yes, End Event</button>
-      </div>` : `<div id="delete-conf-${ev.id}" style="display:none;margin-top:0.75rem;background:var(--bg3);border-radius:0.65rem;padding:0.75rem;border:1px solid var(--neg)">
-        <div style="font-size:0.85rem;font-weight:700;color:var(--neg);margin-bottom:0.3rem">⚠️ Delete Event?</div>
-        <div style="font-size:0.8rem;color:var(--text2);margin-bottom:0.75rem">This removes the event and its session links. The actual sessions and results are kept but will count on the leaderboard again.</div>
-        <button data-delete-confirm="${ev.id}" class="btn-ghost" style="padding:0.4rem 1rem;font-size:0.8rem;color:var(--neg);border-color:var(--neg)">Yes, Delete Event</button>
+      </div>` : `<div id="delete-conf-${ev.id}" style="display:none;margin-top:0.75rem;background:var(--bg3);border-radius:0.65rem;padding:0.75rem;border:1px solid ${isDeleteLocked?'var(--text2)':'var(--neg)'}">
+        <div style="font-size:0.85rem;font-weight:700;margin-bottom:0.3rem">${isDeleteLocked ? '🔒 Delete Locked' : '⚠️ Delete Event?'}</div>
+        ${isDeleteLocked
+          ? `<div style="font-size:0.8rem;color:var(--text2);margin-bottom:0.75rem">Events can only be deleted within 24 hours of their last session. This event's delete window has passed.</div>`
+          : `<div style="font-size:0.8rem;color:var(--text2);margin-bottom:0.75rem">This removes the event and its session links. The actual sessions and results are kept but will count on the leaderboard again.</div>`}
+        ${isDeleteLocked ? '' : `<button data-delete-confirm="${ev.id}" class="btn-ghost" style="padding:0.4rem 1rem;font-size:0.8rem;color:var(--neg);border-color:var(--neg)">Yes, Delete Event</button>`}
       </div>`}
       <div id="summary-${ev.id}" style="display:none;margin-top:0.75rem"></div>
     </div>`;
